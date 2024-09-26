@@ -32,9 +32,9 @@ float gasFullWeight = 0;
 bool tankInstalled = false;
 
 // WiFi and Line Notify
-const char* ssid = "your-SSID";
-const char* password = "your-PASSWORD";
-const char* lineToken = "your-LINE-NOTIFY-TOKEN";
+const char* ssid = "Admin_g2";
+const char* password = "@Admin15240";
+const char* lineToken = "yajltNDIPGHStIhwR9BEgYZtMw2J2mEef4k5XpqKLEX";
 
 void setup() {
   Serial.begin(115200);
