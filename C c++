@@ -1,54 +1,63 @@
-#include <Arduino.h>
-#include <HX711.h>
 #include <LiquidCrystal_I2C.h>
+#include "HX711.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-// กำหนดพินต่างๆ
-#define LOADCELL_DOUT_PIN  D3
-#define LOADCELL_SCK_PIN   D4
-#define SENSOR_PIN         D5
-#define LED_GREEN_PIN      D6
-#define LED_YELLOW_PIN     D7
-#define LED_RED_PIN        D8
-#define BUTTON_PIN         D9
+// Setup LCD display (20 columns and 4 rows)
+LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-// กำหนดค่าต่างๆ
-#define WIFI_SSID       "group_2"
-#define WIFI_PASSWORD   "!project001"
-#define LINE_API_URL    "https://notify-api.line.me/api/notify"
-#define LINE_TOKEN      "oQ0YYWDDBlVreuJW7mwTerJJT6JwQOgayASuQET0Sur"
-
-// สร้างออบเจ็กต์
+// Setup Load Cell
 HX711 scale;
-LiquidCrystal_I2C lcd(0x27, 16, 2);  // ปรับที่อยู่ I2C ของ LCD หากจำเป็น
 
-// ตัวแปรต่างๆ
-float calibration_factor = -7050; // ปรับค่านี้ตามการสอบเทียบ
-float weight_threshold_full = 15.0; // กิโลกรัม
-float weight_threshold_low = 5.0; // กิโลกรัม
-int buttonState = 0;
-bool objectDetected = false;
+// Pin definitions
+const int button4Kg = 13;
+const int button7Kg = 12;
+const int button15Kg = 14;
+const int button48Kg = 27;
+const int resetButton = 26;
 
-unsigned long lastResetTime = 0;
-bool resetCountdownStarted = false;
+const int ledGreen = 25;
+const int ledYellow = 33;
+const int ledRed = 32;
+
+const int gasSensorPin = 4; // Sensor to detect if gas tank is present
+
+// Tank weights (empty)
+const float emptyWeight4Kg = 6.4;
+const float emptyWeight7Kg = 10.0;
+const float emptyWeight15Kg = 16.3;
+const float emptyWeight48Kg = 34.3;
+
+float gasFullWeight = 0;
+bool tankInstalled = false;
+
+// WiFi and Line Notify
+const char* ssid = "your-SSID";
+const char* password = "your-PASSWORD";
+const char* lineToken = "your-LINE-NOTIFY-TOKEN";
 
 void setup() {
   Serial.begin(115200);
   lcd.init();
   lcd.backlight();
 
-  pinMode(SENSOR_PIN, INPUT);
-  pinMode(LED_GREEN_PIN, OUTPUT);
-  pinMode(LED_YELLOW_PIN, OUTPUT);
-  pinMode(LED_RED_PIN, OUTPUT);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(button4Kg, INPUT);
+  pinMode(button7Kg, INPUT);
+  pinMode(button15Kg, INPUT);
+  pinMode(button48Kg, INPUT);
+  pinMode(resetButton, INPUT);
+  
+  pinMode(ledGreen, OUTPUT);
+  pinMode(ledYellow, OUTPUT);
+  pinMode(ledRed, OUTPUT);
+  
+  pinMode(gasSensorPin, INPUT);
 
-  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
-  scale.set_scale(calibration_factor);
-  scale.tare();
-
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Initialize the scale (HX711)
+  scale.begin(22, 21); // CLK and DOUT pins
+  
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
@@ -57,91 +66,111 @@ void setup() {
 }
 
 void loop() {
-  objectDetected = digitalRead(SENSOR_PIN) == HIGH;
-
-  if (objectDetected) {
-    float weight = scale.get_units(10);
+  // Detect tank presence
+  tankInstalled = digitalRead(gasSensorPin);
+  
+  if (!tankInstalled) {
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Weight: ");
-    lcd.print(weight);
-    lcd.print(" kg");
-
-    // ควบคุมไฟ LED ตามน้ำหนัก
-    if (weight >= weight_threshold_full) {
-      digitalWrite(LED_GREEN_PIN, HIGH);
-      digitalWrite(LED_YELLOW_PIN, LOW);
-      digitalWrite(LED_RED_PIN, LOW);
-    } else if (weight >= weight_threshold_low) {
-      digitalWrite(LED_GREEN_PIN, LOW);
-      digitalWrite(LED_YELLOW_PIN, HIGH);
-      digitalWrite(LED_RED_PIN, LOW);
-    } else {
-      digitalWrite(LED_GREEN_PIN, LOW);
-      digitalWrite(LED_YELLOW_PIN, LOW);
-      digitalWrite(LED_RED_PIN, HIGH);
-    }
-
-    // ตรวจสอบการกดปุ่มรีเซ็ต
-    buttonState = digitalRead(BUTTON_PIN);
-    if (buttonState == LOW) {
-      scale.tare();
-      lastResetTime = millis(); 
-      resetCountdownStarted = true;
-      lcd.clear();
-      lcd.print("Reset done!");
-      delay(1000);
-    }
-
-    // แสดงผล LCD ก่อนรีเซ็ต
-    if (resetCountdownStarted) {
-      unsigned long timeSinceReset = millis() - lastResetTime;
-      if (timeSinceReset >= 20 * 60 * 1000) { // 20 นาที
-        // รีเซ็ตอัตโนมัติ
-        scale.tare();
-        lcd.clear();
-        lcd.print("Reset done!");
-        resetCountdownStarted = false;
-        delay(1000);
-      } else if (timeSinceReset >= 19 * 60 * 1000) { // แสดงผลก่อน 1 นาที
-        int secondsRemaining = (20 * 60 * 1000 - timeSinceReset) / 1000;
-        lcd.clear();
-        lcd.print("Auto reset in ");
-        lcd.print(secondsRemaining);
-        lcd.print("s");
-      }
-    }
-  } else {
-    lcd.clear();
-    lcd.print("No object");
-    digitalWrite(LED_GREEN_PIN, LOW);
-    digitalWrite(LED_YELLOW_PIN, LOW);
-    digitalWrite(LED_RED_PIN, LOW);
+    lcd.print("NO GAS TANK INSTALLED");
+    delay(2000);
+    return;
+  }
+  
+  // Check which button is pressed for gas type selection
+  if (digitalRead(button4Kg) == HIGH) {
+    gasFullWeight = 4.0;
+    handleGasTank(emptyWeight4Kg, gasFullWeight);
+  } else if (digitalRead(button7Kg) == HIGH) {
+    gasFullWeight = 7.0;
+    handleGasTank(emptyWeight7Kg, gasFullWeight);
+  } else if (digitalRead(button15Kg) == HIGH) {
+    gasFullWeight = 15.0;
+    handleGasTank(emptyWeight15Kg, gasFullWeight);
+  } else if (digitalRead(button48Kg) == HIGH) {
+    gasFullWeight = 48.0;
+    handleGasTank(emptyWeight48Kg, gasFullWeight);
   }
 
-  // ส่งข้อความ Line เมื่อมีการสั่งซื้อ (สมมติว่ามีการสั่งซื้อเมื่อน้ำหนักลดลงถึงระดับหนึ่ง)
-  if (objectDetected && scale.get_units(10) < weight_threshold_low) {
-    sendLineNotification("ได้รับการสั่งซื้อถังแก๊ส!");
+  if (digitalRead(resetButton) == HIGH) {
+    resetSystem();
   }
-
-  delay(1000);
 }
 
-void sendLineNotification(String message) {
-  HTTPClient http;
-  http.begin(LINE_API_URL);
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+void handleGasTank(float emptyWeight, float fullWeight) {
+  // Get the current weight from the scale
+  float currentWeight = scale.get_units();
+  float gasWeight = currentWeight - emptyWeight;
 
-  String payload = "message=" + message;
-  int httpResponseCode = http.POST(payload);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Gas: ");
+  lcd.print(gasWeight, 1);
+  lcd.print(" kg");
 
-  if (httpResponseCode > 0) {
-    Serial.print("Line notification sent, HTTP response code: ");
-    Serial.println(httpResponseCode);
-  } else {
-    Serial.print("Error sending Line notification, error: ");
-    Serial.println(http.errorToString(httpResponseCode));
+  // Determine gas level and update LEDs and LCD
+  if (gasWeight > fullWeight * 0.75) {
+    lcd.setCursor(0, 1);
+    lcd.print("HIGH GAS VOLUME");
+    updateLEDs(HIGH);
+  } else if (gasWeight > fullWeight * 0.2) {
+    lcd.setCursor(0, 1);
+    lcd.print("LOW GAS VOLUME");
+    updateLEDs(LOW);
+    sendLineNotify("Gas is low!");
+  } else if (gasWeight <= fullWeight * 0.2) {
+    lcd.setCursor(0, 1);
+    lcd.print("OUT OF GAS");
+    updateLEDs(OUT);
+    sendLineNotify("Gas is out!");
   }
+}
 
-  http.end();
+void updateLEDs(int level) {
+  switch (level) {
+    case HIGH:
+      digitalWrite(ledGreen, HIGH);
+      digitalWrite(ledYellow, LOW);
+      digitalWrite(ledRed, LOW);
+      break;
+    case LOW:
+      digitalWrite(ledGreen, LOW);
+      digitalWrite(ledYellow, HIGH);
+      digitalWrite(ledRed, LOW);
+      break;
+    case OUT:
+      digitalWrite(ledGreen, LOW);
+      digitalWrite(ledYellow, LOW);
+      digitalWrite(ledRed, HIGH);
+      break;
+  }
+}
+
+void resetSystem() {
+  lcd.clear();
+  lcd.print("System Reset");
+  delay(1000);
+  lcd.clear();
+  updateLEDs(HIGH); // Reset to full
+}
+
+void sendLineNotify(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin("https://notify-api.line.me/api/notify");
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    http.addHeader("Authorization", "Bearer " + String(lineToken));
+
+    int httpResponseCode = http.POST("message=" + message);
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println(httpResponseCode);
+      Serial.println(response);
+    } else {
+      Serial.println("Error sending message");
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi not connected");
+  }
 }
